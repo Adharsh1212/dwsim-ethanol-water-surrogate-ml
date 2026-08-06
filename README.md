@@ -1,52 +1,90 @@
-# DWSIM Ethanol-Water Surrogate Model — Project Context
+# DWSIM Ethanol-Water Distillation — ML Surrogate Model
 
-## Internship Context
+**FOSSEE Semester Long Internship — Autumn 2026**
+Screening Task 3: Surrogate Modeling using DWSIM and ML
 
-**Program:** FOSSEE Semester Long Internship — Autumn 2026
-**Organized by:** FOSSEE, IIT Bombay (Ministry of Education, Govt. of India)
-**Mode:** Remote, full-time (3 months, 8 hrs/day) or part-time (4 months, 4 hrs/day)
+## What this is
 
-**Key dates:**
-- Registration & Submission window: 27 July – 23 August 2026
-- Results declared: 2 September 2026
-- Internship start: 7 September 2026
+A machine learning surrogate for a DWSIM binary distillation column (ethanol-water).
+Instead of re-running the full DWSIM simulation every time you want to know how a
+column behaves at a given feed composition and reflux ratio, this model predicts the
+key outputs directly — in milliseconds instead of seconds.
 
-**Selection process:** Choose a project → register via FOSSEE's form → complete at least one screening task for that project → selection is based purely on evaluation of the submitted task by FOSSEE mentors/reviewers.
+## Why it matters
 
-**Project chosen:** DWSIM (open-source chemical process simulator)
-**Screening task chosen:** Task 3 — Surrogate Modeling using DWSIM and ML
-> Objective: develop a machine learning surrogate model for a binary distillation column using simulation data generated from DWSIM.
+DWSIM solves rigorously but takes real time to converge on every run. If you're
+exploring hundreds or thousands of operating points (e.g. for optimization, sensitivity
+analysis, or control system design), that adds up. A surrogate model trained on a
+representative set of DWSIM runs can stand in for those repeated re-simulations —
+measured here at roughly **31,773x faster** than a DWSIM solve, using DWSIM's own
+logged solve time (4.227s) vs. this model's prediction time.
 
-## What This Project Does
+## Method
 
-Builds an ethanol-water binary distillation column in DWSIM, generates a dataset by sweeping feed composition and reflux ratio across many simulation runs, and trains a machine learning model that predicts the column's key outputs (distillate/bottoms purity, condenser/reboiler duty) directly from those two inputs — without needing to re-run the full DWSIM simulation each time.
+1. **Flowsheet**: 10-stage ethanol-water column in DWSIM 9.0.5, NRTL property package
+   (needed because ethanol-water is non-ideal and forms an azeotrope — Raoult's Law or
+   Peng-Robinson would misrepresent the phase behavior), total condenser, bottoms flow
+   fixed at 25 mol/s.
 
-## Methodology Summary
+2. **Data generation**: DWSIM's Sensitivity Analysis tool, sweeping feed ethanol mole
+   fraction and reflux ratio, recording distillate purity, bottoms purity, condenser
+   duty, and reboiler duty.
 
-1. **Flowsheet setup in DWSIM 9.0.5**
-   - Compounds: Ethanol, Water
-   - Property package: NRTL (required for this non-ideal, azeotrope-forming binary pair — ideal models like Raoult's Law or Peng-Robinson would misrepresent the phase behavior)
-   - Distillation column: 10 stages, feed on stage 5, total condenser, reflux ratio spec + bottoms product molar flow spec (25 mol/s)
+3. **Data cleaning**: an early sweep across feed composition 0.1–0.5 had ~60% invalid
+   rows — DWSIM's solver was failing to converge at low feed compositions (the fixed
+   25 mol/s bottoms spec becomes infeasible there) and silently repeating the last
+   successful result instead of throwing an error. Caught this via duplicate-row
+   detection, since identical outputs across different reflux ratios isn't physically
+   possible. Fixed by narrowing to feed composition 0.3–0.5, where the column reliably
+   converges, giving 182 clean rows. `convergence_envelope_map.png` maps out where the
+   column converges vs. fails across the full explored range (380 points).
 
-2. **Dataset generation via DWSIM's built-in Sensitivity Analysis tool**
-   - Independent variables: feed ethanol mole fraction, condenser reflux ratio
-   - Dependent variables recorded: distillate ethanol mole fraction, bottoms water mass fraction, condenser duty, reboiler duty
+4. **Model**: Random Forest Regressor (scikit-learn), one per target, 80/20 train/test
+   split. R² of 0.9998 (distillate purity), 0.9997 (bottoms purity), 0.9912 (condenser
+   duty), 0.9914 (reboiler duty). Feature importance shows reflux ratio dominates
+   distillate purity, feed composition dominates bottoms purity — consistent with
+   distillation theory.
 
-3. **Data quality check and cleaning**
-   - An initial sweep across feed composition 0.1–0.5 showed that ~60% of rows were invalid: DWSIM's solver failed to converge for low-ethanol-feed cases (an artifact of the fixed 25 mol/s bottoms flow spec becoming infeasible at those compositions) and silently repeated the last successful result instead of erroring.
-   - Diagnosed via duplicate-row detection (identical outputs across different reflux ratios is not physically possible — reflux ratio changing must change duty and purity).
-   - Fixed by narrowing the feed composition range to 0.3–0.5, where the column reliably converges, and re-running with more points (25 × 10 = 250 combinations). Final clean dataset: 182 valid rows.
+## Validated range
 
-4. **Surrogate model**
-   - Random Forest Regressor (scikit-learn), one model per output variable
-   - 80/20 train/test split
-   - Results: R² of 0.9998 (distillate purity), 0.9997 (bottoms purity), 0.9912 (condenser duty), 0.9914 (reboiler duty)
-   - Feature importance: reflux ratio dominates distillate purity prediction; feed composition dominates bottoms purity prediction — physically sensible and consistent with distillation theory
+This model is only reliable for **feed ethanol mole fraction 0.3–0.5** and
+**reflux ratio 2–8**, since that's the range it was trained and validated on. Outside
+that, it's extrapolating. `demo.py` flags this automatically.
 
-## Repository Contents
+## Try it
 
-- `dwsim_surrogate_dataset_v2_clean.csv` — final cleaned training dataset (182 rows)
-- `surrogate_model.py` — model training, evaluation, and plotting script
-- `predicted_vs_actual.png` — validation scatter plots for all 4 targets
-- `model_performance_summary.csv` — R²/MAE/RMSE per target
-- `feature_importance.csv` — relative importance of each input per target
+```bash
+python demo.py --feed 0.4 --reflux 5
+```
+
+or run it interactively:
+
+```bash
+python demo.py
+```
+
+Requires `surrogate_models.pkl` in the same folder (included in this repo — the model
+doesn't need to be retrained to use the demo).
+
+## Repository contents
+
+| File | Description |
+|---|---|
+| `dwsim_surrogate_dataset_v2_clean.csv` | Final cleaned training dataset (182 rows) |
+| `surrogate_model.py` | Model training, evaluation, and plotting script |
+| `surrogate_models.pkl` | Trained models (needed by `demo.py`) |
+| `demo.py` | CLI demo — instant predictions from feed/reflux input |
+| `predicted_vs_actual.png` | Validation scatter plots for all 4 targets |
+| `convergence_envelope_map.png` | Where DWSIM converges vs. fails, full explored range |
+| `model_performance_summary.csv` | R² / MAE / RMSE per target |
+| `feature_importance.csv` | Relative importance of each input per target |
+| `speed_benchmark.md` | DWSIM vs. surrogate model timing comparison |
+
+## Limitations
+
+- Only two inputs (feed composition, reflux ratio) — other operating variables
+  (e.g. number of stages, bottoms flow spec) are fixed at the values used in the
+  DWSIM flowsheet.
+- Valid only within the 0.3–0.5 feed / 2–8 reflux range noted above.
+- Trained on 182 data points; a larger sweep would likely tighten accuracy further,
+  especially near the edges of the validated range.
