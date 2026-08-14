@@ -1,8 +1,5 @@
 # DWSIM Ethanol-Water Distillation — ML Surrogate Model
 
-**FOSSEE Semester Long Internship — Autumn 2026**
-Screening Task 3: Surrogate Modeling using DWSIM and ML
-
 ## What this is
 
 A machine learning surrogate for a DWSIM binary distillation column (ethanol-water).
